@@ -18,7 +18,11 @@ CORS(app)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("WARNING: SUPABASE_URL or SUPABASE_KEY not set. Database features will be disabled.")
+    supabase = None
+else:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 MODEL_PATH = "vosk-model-small-ru-0.22"
 model = None
@@ -214,9 +218,15 @@ def keepalive():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    try:
-        audio_file = request.files['audio']
+    if 'audio' not in request.files:
+        return jsonify({'error': 'No audio file provided'}), 400
 
+    audio_file = request.files['audio']
+    if audio_file.filename == '':
+        return jsonify({'error': 'Empty filename'}), 400
+
+    tmp_path = None
+    try:
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
             audio_file.save(tmp.name)
             tmp_path = tmp.name
@@ -231,58 +241,63 @@ def analyze():
         filename = audio_file.filename
         analysis_date = datetime.now().isoformat()
 
-        keep_supabase_awake()
+        if supabase is not None:
+            try:
+                keep_supabase_awake()
 
-        audio_response = supabase.table('Аудиофайл').insert({
-            'Имя_файла': filename,
-            'Длительность': duration,
-            'Дата_анализа': analysis_date
-        }).execute()
+                audio_response = supabase.table('Аудиофайл').insert({
+                    'Имя_файла': filename,
+                    'Длительность': duration,
+                    'Дата_анализа': analysis_date
+                }).execute()
 
-        audio_id = audio_response.data[0]['ИН_аудиофайла']
+                audio_id = audio_response.data[0]['ИН_аудиофайла']
 
-        supabase.table('Текст').insert({
-            'Объем_текста': word_count,
-            'Количество_маркеров': markers_count,
-            'Плотность_маркеров': markers_density,
-            'Риск_мошенничества': risk_level,
-            'Аудиофайл': audio_id
-        }).execute()
+                supabase.table('Текст').insert({
+                    'Объем_текста': word_count,
+                    'Количество_маркеров': markers_count,
+                    'Плотность_маркеров': markers_density,
+                    'Риск_мошенничества': risk_level,
+                    'Аудиофайл': audio_id
+                }).execute()
 
-        profile = prosodic_characteristics(tmp_path)
+                profile = prosodic_characteristics(tmp_path)
 
-        profile_response = supabase.table('Просодический_профиль').insert({
-            'mfcc_mean': profile['mfcc_mean'],
-            'mfcc_std': profile['mfcc_std'],
-            'spectral_constrast': profile['spectral_contrast'],
-            'zero_crossing_rate': profile['zero_crossing_rate'],
-            'Аудиофайл': audio_id
-        }).execute()
+                profile_response = supabase.table('Просодический_профиль').insert({
+                    'mfcc_mean': profile['mfcc_mean'],
+                    'mfcc_std': profile['mfcc_std'],
+                    'spectral_constrast': profile['spectral_contrast'],
+                    'zero_crossing_rate': profile['zero_crossing_rate'],
+                    'Аудиофайл': audio_id
+                }).execute()
 
-        profile_id = profile_response.data[0]['ИН_профиля']
+                profile_id = profile_response.data[0]['ИН_профиля']
 
-        fraudster_id, similarity = comparison(profile)
+                fraudster_id, similarity = comparison(profile)
 
-        if fraudster_id and similarity >= 60:
-            supabase.table('Совпадение').insert({
-                'Процент_совпадения': int(similarity),
-                'Аудиофайл': audio_id,
-                'Просодический_профиль': profile_id,
-                'Мошенник': fraudster_id
-            }).execute()
+                if fraudster_id and similarity >= 60:
+                    supabase.table('Совпадение').insert({
+                        'Процент_совпадения': int(similarity),
+                        'Аудиофайл': audio_id,
+                        'Просодический_профиль': profile_id,
+                        'Мошенник': fraudster_id
+                    }).execute()
 
-            supabase.table('Мошенник').update({
-                'Количество_обращений': supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
-                                                                                                     fraudster_id).execute().data[
-                                            0]['Количество_обращений'] + 1,
-                'Последнее_обращение': analysis_date
-            }).eq('ИН_мошенника', fraudster_id).execute()
+                    supabase.table('Мошенник').update({
+                        'Количество_обращений':
+                            supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
+                                                                                         fraudster_id).execute().data[
+                                0]['Количество_обращений'] + 1,
+                        'Последнее_обращение': analysis_date
+                    }).eq('ИН_мошенника', fraudster_id).execute()
 
-            result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
-        else:
-            result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
+                    result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
+                else:
+                    result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
 
-        os.unlink(tmp_path)
+            except Exception as db_error:
+                print(f"Database error: {db_error}")
+                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу[/color][/size]'
 
         return jsonify({
             'success': True,
@@ -295,7 +310,16 @@ def analyze():
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
 
 
 if __name__ == '__main__':
