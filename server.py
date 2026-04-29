@@ -18,11 +18,7 @@ CORS(app)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("WARNING: SUPABASE_URL or SUPABASE_KEY not set. Database features will be disabled.")
-    supabase = None
-else:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 MODEL_PATH = "vosk-model-small-ru-0.22"
 model = None
@@ -33,9 +29,7 @@ def vosk_model():
     if model is None:
         if not os.path.exists(MODEL_PATH):
             urllib.request.urlretrieve(
-                "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip",
-                "model.zip"
-            )
+                "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip", "model.zip")
             with zipfile.ZipFile("model.zip", 'r') as zip_ref:
                 zip_ref.extractall(".")
             os.remove("model.zip")
@@ -80,7 +74,7 @@ def comparison(profile):
         fraudster_profile = {
             'mfcc_mean': np.array(fraudster['mfcc_mean']),
             'mfcc_std': np.array(fraudster['mfcc_std']),
-            'spectral_contrast': np.array(fraudster['spectral_constrast']),
+            'spectral_contrast': np.array(fraudster['spectral_contrast']),
             'zero_crossing_rate': np.array(fraudster['zero_crossing_rate'])
         }
 
@@ -145,9 +139,8 @@ def text_analysis(current_audio):
 [color=000000][b]Система распознала сценарий "Сообщите код".\nЧто делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
 2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS или push-уведомлений.
-3. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
-4. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
-5. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+3. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
+4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
 
     elif (employee_danger >= 1 and hack_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
             hack_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
@@ -157,10 +150,9 @@ def text_analysis(current_audio):
         content = f'''{title}\n
 [color=000000][b]Система распознала сценарий "Финансы под угрозой".\nЧто делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
-2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS или push-уведомлений.
-3. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
-4. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
-5. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+2. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
+3. Если вы [color=ff0000][b]УЖЕ ПЕРЕВЕЛИ[/b][/color] деньги - обратитесь в полицию.
+4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
 
     elif (person_danger >= 1 and accident_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
             employee_danger >= 1 and person_danger >= 1 and accident_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1):
@@ -170,28 +162,25 @@ def text_analysis(current_audio):
 [color=000000][b]Система распознала сценарий "Родственник в беде".\nЧто делать прямо сейчас:[/b]
 1. [color=ff0000][b]Прервите[/b][/color] разговор и [color=ff0000][b]перезвоните[/b][/color] родственнику на его личный номер.
 2. [color=ff0000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
-3. Если собеседник требует «не класть трубку», говорить тихо, не предупреждать других близких — это [color=ff0000][b] 100% мошенник.[/b][/color]
-4. Помните: сотрудник полиции/СК [color=ff0000][b]никогда не потребует[/b][/color] перевода денег для освобождения вашего родственника.'''
+3. Помните: сотрудник полиции/СК [color=ff0000][b]никогда не потребует[/b][/color] перевода денег для освобождения вашего родственника.'''
 
     elif bank_danger >= 1 or hack_danger >= 1:
         risk_level = 'Средний'
         title = '[color=ffd700][b]СРЕДНИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
         content = f'''{title}\n
 [color=000000][b]Рекомендации:[/b]
-1. Будьте бдительны и [color=ffd700][b]не называйте[/b][/color] никакие коды из SMS или push-уведомлений.
-2. Настоящий сотрудник никогда [color=ffd700][b]не просит[/b][/color] перевести деньги на другой счет для «безопасности».
-3. Если собеседник [color=ffd700][b]торопит и угрожает блокировкой[/b][/color] - это мошенник.
-4. Прекратите разговор и перезвоните в банк самостоятельно по официальному номеру.'''
+1. Будьте бдительны и [color=ffd700][b]не называйте[/b][/color] никакие коды из SMS.
+2. Если собеседник [color=ffd700][b]торопит и угрожает блокировкой[/b][/color] - это мошенник.
+3. Если сомневаетесь, прервите разговор и перезвоните в банк самостоятельно по официальному номеру.'''
 
     else:
         risk_level = 'Низкий'
         title = '[color=008000][b]НИЗКИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]'
         content = f'''{title}\n
 [color=000000][b]Правила безопасности при телефонном разговоре:[/b]
-1. Никогда [color=008000][b]не называйте[/b][/color] никакие коды из SMS или push-уведомлений.
+1. Никогда [color=008000][b]не называйте[/b][/color] коды из SMS.
 2. [color=008000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
-3. При любом сомнении - [color=008000][b]положите трубку[/b][/color] и перезвоните в банк сами.
-4. Помните: сотрудники банка никогда не запрашивают данные карты по телефону.'''
+3. При любом сомнении - [color=008000][b]положите трубку[/b][/color] и перезвоните в банк сами.'''
 
     return text, content, risk_level, word_count, markers_count, markers_density
 
@@ -296,8 +285,10 @@ def analyze():
                     result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
 
             except Exception as db_error:
+                import traceback
                 print(f"Database error: {db_error}")
-                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу[/color][/size]'
+                print(f"Traceback: {traceback.format_exc()}")
+                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу ({str(db_error)})[/color][/size]'
 
         return jsonify({
             'success': True,
