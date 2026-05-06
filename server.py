@@ -220,6 +220,15 @@ def analyze():
             audio_file.save(tmp.name)
             tmp_path = tmp.name
 
+        try:
+            with wave.open(tmp_path, 'rb') as wav_check:
+                if wav_check.getnframes() == 0:
+                    os.unlink(tmp_path)
+                    return jsonify({'error': 'Аудиофайл не содержит данных'}), 400
+        except wave.Error:
+            os.unlink(tmp_path)
+            return jsonify({'error': 'Файл не является корректным WAV'}), 400
+
         text, result_content, risk_level, word_count, markers_count, markers_density = text_analysis(tmp_path)
 
         if text is None:
@@ -316,3 +325,4 @@ def analyze():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+    
