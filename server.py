@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import vosk
+import speech_recognition as sr
 import json
 import wave
 import tempfile
@@ -12,6 +12,11 @@ from datetime import datetime
 import urllib.request
 import zipfile
 from supabase import create_client, Client
+from collections import Counter
+import torch
+import torch.nn as nn
+import joblib
+from pydub import AudioSegment
 
 app = Flask(__name__)
 CORS(app)
@@ -20,21 +25,143 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-MODEL_PATH = "vosk-model-small-ru-0.22"
-model = None
+
+class RiskClassifier(nn.Module):
+    def __init__(self, input_dim=24, hidden_dim=32, num_classes=3):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 
-def vosk_model():
-    global model
-    if model is None:
-        if not os.path.exists(MODEL_PATH):
-            urllib.request.urlretrieve(
-                "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip", "model.zip")
-            with zipfile.ZipFile("model.zip", 'r') as zip_ref:
-                zip_ref.extractall(".")
-            os.remove("model.zip")
-        model = vosk.Model(MODEL_PATH)
-    return model
+NEURAL_MODEL_PATH = "fraud_risk_model.pth"
+SCALER_PATH = "scaler.pkl"
+
+neural_model = None
+scaler = None
+
+if os.path.exists(NEURAL_MODEL_PATH) and os.path.exists(SCALER_PATH):
+    neural_model = RiskClassifier()
+    neural_model.load_state_dict(torch.load(NEURAL_MODEL_PATH, map_location='cpu'))
+    neural_model.eval()
+    scaler = joblib.load(SCALER_PATH)
+
+
+def extract_neural_features(text):
+    text_lower = text.lower()
+    words = text_lower.split()
+    word_count = len(words)
+
+    hack_count = sum(1 for m in hacking_markers if m in text_lower)
+    bank_count = sum(1 for m in bank_markers if m in text_lower)
+    employee_count = sum(1 for m in employee_markers if m in text_lower)
+    person_count = sum(1 for m in person_markers if m in text_lower)
+    accident_count = sum(1 for m in accident_markers if m in text_lower)
+    urgent_count = sum(1 for m in urgent_markers if m in text_lower)
+    code_count = sum(1 for m in code_markers if m in text_lower)
+
+    total_markers = hack_count + bank_count + employee_count + person_count + accident_count + urgent_count + code_count
+    markers_density = (total_markers / word_count * 100) if word_count > 0 else 0
+
+    categories = [hack_count, bank_count, employee_count, person_count, accident_count, urgent_count, code_count]
+    has_multiple_categories = sum(1 for c in categories if c > 0)
+
+    all_markers = hacking_markers + bank_markers + employee_markers + person_markers + accident_markers + urgent_markers + code_markers
+    unique_markers = len(set(m for m in all_markers if m in text_lower))
+    unique_ratio = unique_markers / total_markers if total_markers > 0 else 0
+
+    first_marker_pos = word_count
+    for i, word in enumerate(words):
+        if any(m in word for m in all_markers):
+            first_marker_pos = i
+            break
+
+    bigram_hack_bank = hack_count * bank_count
+    bigram_code_urgent = code_count * urgent_count
+    bigram_employee_hack = employee_count * hack_count
+    bigram_person_accident = person_count * accident_count
+    bigram_code_bank = code_count * bank_count
+    bigram_urgent_bank = urgent_count * bank_count
+    bigram_employee_code = employee_count * code_count
+
+    bigrams_sum = (bigram_hack_bank + bigram_code_urgent + bigram_employee_hack +
+                   bigram_person_accident + bigram_code_bank + bigram_urgent_bank +
+                   bigram_employee_code)
+    high_frequency_bigrams = bigrams_sum / 7 if total_markers > 0 else 0
+
+    sentence_count = text.count('.') + text.count('!') + text.count('?') + 1
+    avg_sentence_length = word_count / sentence_count if sentence_count > 0 else word_count
+    exclamation_count = text.count('!')
+
+    word_freq = Counter(words)
+    repetition_rate = sum(1 for c in word_freq.values() if c > 2) / max(1, len(word_freq))
+
+    return np.array([
+        hack_count, bank_count, employee_count, person_count, accident_count, urgent_count, code_count,
+        markers_density, has_multiple_categories, total_markers, unique_ratio, first_marker_pos,
+        bigram_hack_bank, bigram_code_urgent, bigram_employee_hack, bigram_person_accident,
+        bigram_code_bank, bigram_urgent_bank, bigram_employee_code, high_frequency_bigrams,
+        word_count, avg_sentence_length, exclamation_count, repetition_rate
+    ], dtype=np.float32)
+
+
+def predict_risk_by_neural(text):
+    if neural_model is None or scaler is None:
+        return "Средний", [0.33, 0.34, 0.33]
+
+    features = extract_neural_features(text)
+    features_scaled = scaler.transform([features])
+    features_tensor = torch.FloatTensor(features_scaled)
+
+    with torch.no_grad():
+        outputs = neural_model(features_tensor)
+        probs = torch.softmax(outputs, dim=1).numpy()[0]
+        predicted_class = np.argmax(probs)
+
+    risk_names = {0: "Низкий", 1: "Средний", 2: "Высокий"}
+    return risk_names[predicted_class], probs.tolist()
+
+
+def to_wav_if_needed(input_path):
+    if str(input_path).endswith('.wav'):
+        return str(input_path)
+
+    wav_path = str(input_path).rsplit('.', 1)[0] + '_temp.wav'
+    audio = AudioSegment.from_file(str(input_path))
+    audio.export(wav_path, format='wav')
+    return wav_path
+
+
+def transcribe_audio(audio_path):
+    recognizer = sr.Recognizer()
+    wav_path = to_wav_if_needed(audio_path)
+
+    try:
+        with sr.AudioFile(wav_path) as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.3)
+            audio = recognizer.record(source)
+            text = recognizer.recognize_google(audio, language="ru-RU")
+            return text.strip()
+    except sr.UnknownValueError:
+        return ""
+    except sr.RequestError as e:
+        print(f"Ошибка API: {e}")
+        return ""
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        return ""
+    finally:
+        if wav_path != str(audio_path) and os.path.exists(wav_path):
+            os.remove(wav_path)
 
 
 def get_duration(file_path):
@@ -74,7 +201,7 @@ def comparison(profile):
         fraudster_profile = {
             'mfcc_mean': np.array(fraudster['mfcc_mean']),
             'mfcc_std': np.array(fraudster['mfcc_std']),
-            'spectral_contrast': np.array(fraudster['spectral_contrast']),
+            'spectral_contrast': np.array(fraudster.get('spectral_constrast', fraudster.get('spectral_contrast', []))),
             'zero_crossing_rate': np.array(fraudster['zero_crossing_rate'])
         }
 
@@ -93,96 +220,28 @@ def comparison(profile):
     return best_match, best_similarity
 
 
-def text_analysis(current_audio):
-    try:
-        wf = wave.open(current_audio, 'rb')
-        model = vosk_model()
-        rec = vosk.KaldiRecognizer(model, wf.getframerate())
-
-        text = ""
-        while True:
-            data = wf.readframes(4000)
-            if not data:
-                break
-            if rec.AcceptWaveform(data):
-                result = json.loads(rec.Result())
-                text += result.get('text', '') + " "
-
-        final = json.loads(rec.FinalResult())
-        text += final.get('text', '')
-        wf.close()
-
-        if not text.strip():
-            return None, 'Не удалось распознать текст.', None, 0, 0, 0
-
-    except Exception as e:
-        return None, f'Ошибка: {e}', None, 0, 0, 0
-
-    text_lower = text.lower()
-    word_count = len(text_lower.split())
-
-    hack_danger = sum(m in text_lower for m in hacking_markers)
-    bank_danger = sum(m in text_lower for m in bank_markers)
-    employee_danger = sum(m in text_lower for m in employee_markers)
-    person_danger = sum(m in text_lower for m in person_markers)
-    urgent_danger = sum(m in text_lower for m in urgent_markers)
-    code_danger = sum(m in text_lower for m in code_markers)
-    accident_danger = sum(m in text_lower for m in accident_markers)
-
-    markers_count = hack_danger + bank_danger + employee_danger + person_danger + urgent_danger + code_danger + accident_danger
-    markers_density = int((markers_count / word_count * 100)) if word_count > 0 else 0
-
-    if code_danger >= 1:
-        risk_level = 'Высокий'
-        title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
-        content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Сообщите код".\nЧто делать прямо сейчас:[/b]
+def generate_recommendation(risk_level):
+    if risk_level == "Высокий":
+        return '''[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]
+[color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
-2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS или push-уведомлений.
-3. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
-4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS.
+3. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
+4. Перезвоните в банк по официальному номеру.[/color]'''
 
-    elif (employee_danger >= 1 and hack_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
-            hack_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
-            employee_danger >= 1 and (hack_danger >= 1 or bank_danger >= 1)) or (hack_danger >= 1 and bank_danger >= 1):
-        risk_level = 'Высокий'
-        title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
-        content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Финансы под угрозой".\nЧто делать прямо сейчас:[/b]
-1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
-2. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
-3. Если вы [color=ff0000][b]УЖЕ ПЕРЕВЕЛИ[/b][/color] деньги - обратитесь в полицию.
-4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
-
-    elif (person_danger >= 1 and accident_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1) or (
-            employee_danger >= 1 and person_danger >= 1 and accident_danger >= 1 and bank_danger >= 1 and urgent_danger >= 1):
-        risk_level = 'Высокий'
-        title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
-        content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Родственник в беде".\nЧто делать прямо сейчас:[/b]
-1. [color=ff0000][b]Прервите[/b][/color] разговор и [color=ff0000][b]перезвоните[/b][/color] родственнику на его личный номер.
-2. [color=ff0000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
-3. Помните: сотрудник полиции/СК [color=ff0000][b]никогда не потребует[/b][/color] перевода денег для освобождения вашего родственника.'''
-
-    elif bank_danger >= 1 or hack_danger >= 1:
-        risk_level = 'Средний'
-        title = '[color=ffd700][b]СРЕДНИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
-        content = f'''{title}\n
+    elif risk_level == "Средний":
+        return '''[color=ffd700][b]СРЕДНИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]
 [color=000000][b]Рекомендации:[/b]
-1. Будьте бдительны и [color=ffd700][b]не называйте[/b][/color] никакие коды из SMS.
-2. Если собеседник [color=ffd700][b]торопит и угрожает блокировкой[/b][/color] - это мошенник.
-3. Если сомневаетесь, прервите разговор и перезвоните в банк самостоятельно по официальному номеру.'''
+1. Будьте бдительны, [color=ffd700][b]не называйте[/b][/color] коды из SMS.
+2. Если собеседник торопит и угрожает — это мошенник.
+3. Прервите разговор и перезвоните в банк сами.[/color]'''
 
     else:
-        risk_level = 'Низкий'
-        title = '[color=008000][b]НИЗКИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]'
-        content = f'''{title}\n
-[color=000000][b]Правила безопасности при телефонном разговоре:[/b]
+        return '''[color=008000][b]НИЗКИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]
+[color=000000][b]Правила безопасности:[/b]
 1. Никогда [color=008000][b]не называйте[/b][/color] коды из SMS.
-2. [color=008000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
-3. При любом сомнении - [color=008000][b]положите трубку[/b][/color] и перезвоните в банк сами.'''
-
-    return text, content, risk_level, word_count, markers_count, markers_density
+2. [color=008000][b]Не переводите деньги[/b][/color] незнакомцам.
+3. При сомнении - положите трубку и перезвоните в банк по официальному номеру.[/color]'''
 
 
 def keep_supabase_awake():
@@ -220,24 +279,33 @@ def analyze():
             audio_file.save(tmp.name)
             tmp_path = tmp.name
 
-        try:
-            with wave.open(tmp_path, 'rb') as wav_check:
-                if wav_check.getnframes() == 0:
-                    os.unlink(tmp_path)
-                    return jsonify({'error': 'Аудиофайл не содержит данных'}), 400
-        except wave.Error:
-            os.unlink(tmp_path)
-            return jsonify({'error': 'Файл не является корректным WAV'}), 400
+        text = transcribe_audio(tmp_path)
 
-        text, result_content, risk_level, word_count, markers_count, markers_density = text_analysis(tmp_path)
-
-        if text is None:
+        if not text.strip():
             os.unlink(tmp_path)
-            return jsonify({'error': result_content}), 400
+            return jsonify({'error': 'Не удалось распознать текст'}), 400
+
+        risk_level, probabilities = predict_risk_by_neural(text)
+
+        text_lower = text.lower()
+        word_count = len(text_lower.split())
+
+        hack_count = sum(1 for m in hacking_markers if m in text_lower)
+        bank_count = sum(1 for m in bank_markers if m in text_lower)
+        employee_count = sum(1 for m in employee_markers if m in text_lower)
+        person_count = sum(1 for m in person_markers if m in text_lower)
+        accident_count = sum(1 for m in accident_markers if m in text_lower)
+        urgent_count = sum(1 for m in urgent_markers if m in text_lower)
+        code_count = sum(1 for m in code_markers if m in text_lower)
+
+        markers_count = hack_count + bank_count + employee_count + person_count + accident_count + urgent_count + code_count
+        markers_density = int((markers_count / word_count * 100)) if word_count > 0 else 0
 
         duration = int(get_duration(tmp_path))
         filename = audio_file.filename
         analysis_date = datetime.now().isoformat()
+
+        recommendation = generate_recommendation(risk_level)
 
         if supabase is not None:
             try:
@@ -289,21 +357,24 @@ def analyze():
                         'Последнее_обращение': analysis_date
                     }).eq('ИН_мошенника', fraudster_id).execute()
 
-                    result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
+                    recommendation += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
                 else:
-                    result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
+                    recommendation += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
 
             except Exception as db_error:
-                import traceback
                 print(f"Database error: {db_error}")
-                print(f"Traceback: {traceback.format_exc()}")
-                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу ({str(db_error)})[/color][/size]'
+                recommendation += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу[/color][/size]'
 
         return jsonify({
             'success': True,
             'text': text,
-            'result_content': result_content,
+            'result_content': recommendation,
             'risk_level': risk_level,
+            'neural_probabilities': {
+                'low': probabilities[0],
+                'medium': probabilities[1],
+                'high': probabilities[2]
+            },
             'word_count': word_count,
             'markers_count': markers_count,
             'markers_density': markers_density
@@ -325,4 +396,3 @@ def analyze():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-    
