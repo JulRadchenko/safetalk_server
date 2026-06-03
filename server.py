@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify 
 from flask_cors import CORS
 import speech_recognition as sr
 import json
@@ -301,7 +301,7 @@ def analyze():
             'markers_density': markers_density
         })
         
-    except Exception as e:
+    except Exception as e: 
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
