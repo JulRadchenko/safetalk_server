@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify 
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import speech_recognition as sr
 import json
@@ -157,7 +157,7 @@ def analyze_risk_level(text):
 [color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]Прервите[/b][/color] разговор и [color=ff0000][b]перезвоните[/b][/color] родственнику на его личный номер.
 2. [color=ff0000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
-3. Помните: сотрудник полиции/СК [color=ff0000][b]никогда не потребует[/b][/color] перевода денег для освобождения вашего родственника.[/color]'''
+3. Помните: сотрудник полиции [color=ff0000][b]никогда не потребует[/b][/color] перевода денег.[/color]'''
         
     elif bank_count >= 1 or hack_count >= 1 or urgent_count >= 2 or \
          employee_count >= 2 or code_count >= 1:
@@ -223,7 +223,7 @@ def analyze():
                     os.unlink(tmp_path)
                     return jsonify({'error': 'Аудиофайл не содержит данных'}), 400
         except wave.Error:
-            pass  # Может быть не WAV, будет конвертирован позже
+            pass 
         
         text = transcribe_audio(tmp_path)
         
@@ -239,57 +239,62 @@ def analyze():
         analysis_date = datetime.now().isoformat()
         
         if supabase is not None:
-            keep_supabase_awake()
-            
-            audio_response = supabase.table('Аудиофайл').insert({
-                'Имя_файла': filename,
-                'Длительность': duration,
-                'Дата_анализа': analysis_date
-            }).execute()
+            try:
+                keep_supabase_awake()
                 
-            audio_id = audio_response.data[0]['ИН_аудиофайла']
-                
-            supabase.table('Текст').insert({
-                'Объем_текста': word_count,
-                'Количество_маркеров': markers_count,
-                'Плотность_маркеров': markers_density,
-                'Риск_мошенничества': risk_level,
-                'Аудиофайл': audio_id
-            }).execute()
-                
-            profile = prosodic_characteristics(tmp_path)
-                
-            profile_response = supabase.table('Просодический_профиль').insert({
-                'mfcc_mean': profile['mfcc_mean'],
-                'mfcc_std': profile['mfcc_std'],
-                'spectral_constrast': profile['spectral_contrast'],
-                'zero_crossing_rate': profile['zero_crossing_rate'],
-                'Аудиофайл': audio_id
-            }).execute()
-                
-            profile_id = profile_response.data[0]['ИН_профиля']
-                
-            fraudster_id, similarity = comparison(profile)
-                
-            if fraudster_id and similarity >= 60:
-                supabase.table('Совпадение').insert({
-                    'Процент_совпадения': int(similarity),
-                    'Аудиофайл': audio_id,
-                    'Просодический_профиль': profile_id,
-                    'Мошенник': fraudster_id
+                audio_response = supabase.table('Аудиофайл').insert({
+                    'Имя_файла': filename,
+                    'Длительность': duration,
+                    'Дата_анализа': analysis_date
                 }).execute()
+                
+                audio_id = audio_response.data[0]['ИН_аудиофайла']
+                
+                supabase.table('Текст').insert({
+                    'Объем_текста': word_count,
+                    'Количество_маркеров': markers_count,
+                    'Плотность_маркеров': markers_density,
+                    'Риск_мошенничества': risk_level,
+                    'Аудиофайл': audio_id
+                }).execute()
+                
+                profile = prosodic_characteristics(tmp_path)
+                
+                profile_response = supabase.table('Просодический_профиль').insert({
+                    'mfcc_mean': profile['mfcc_mean'],
+                    'mfcc_std': profile['mfcc_std'],
+                    'spectral_constrast': profile['spectral_contrast'],
+                    'zero_crossing_rate': profile['zero_crossing_rate'],
+                    'Аудиофайл': audio_id
+                }).execute()
+                
+                profile_id = profile_response.data[0]['ИН_профиля']
+                
+                fraudster_id, similarity = comparison(profile)
+                
+                if fraudster_id and similarity >= 60:
+                    supabase.table('Совпадение').insert({
+                        'Процент_совпадения': int(similarity),
+                        'Аудиофайл': audio_id,
+                        'Просодический_профиль': profile_id,
+                        'Мошенник': fraudster_id
+                    }).execute()
                     
-                supabase.table('Мошенник').update({
-                    'Количество_обращений':
-                        supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
-                                                                                        fraudster_id).execute().data[
-                            0]['Количество_обращений'] + 1,
-                    'Последнее_обращение': analysis_date
-                }).eq('ИН_мошенника', fraudster_id).execute()
+                    supabase.table('Мошенник').update({
+                        'Количество_обращений':
+                            supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
+                                                                                         fraudster_id).execute().data[
+                                0]['Количество_обращений'] + 1,
+                        'Последнее_обращение': analysis_date
+                    }).eq('ИН_мошенника', fraudster_id).execute()
                     
-                result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
-            else:
-                result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
+                    result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
+                else:
+                    result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
+                    
+            except Exception as db_error:
+                print(f"Database error: {db_error}")
+                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу[/color][/size]'
         
         return jsonify({
             'success': True,
@@ -301,7 +306,7 @@ def analyze():
             'markers_density': markers_density
         })
         
-    except Exception as e: 
+    except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
