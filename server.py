@@ -115,9 +115,6 @@ def extract_neural_features(text):
 
 
 def predict_risk_by_neural(text):
-    if neural_model is None or scaler is None:
-        return "Средний", [0.33, 0.34, 0.33]
-
     features = extract_neural_features(text)
     features_scaled = scaler.transform([features])
     features_tensor = torch.FloatTensor(features_scaled)
@@ -223,6 +220,7 @@ def comparison(profile):
 def generate_recommendation(risk_level):
     if risk_level == "Высокий":
         return '''[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]
+
 [color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
 2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS.
@@ -231,6 +229,7 @@ def generate_recommendation(risk_level):
 
     elif risk_level == "Средний":
         return '''[color=ffd700][b]СРЕДНИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]
+
 [color=000000][b]Рекомендации:[/b]
 1. Будьте бдительны, [color=ffd700][b]не называйте[/b][/color] коды из SMS.
 2. Если собеседник торопит и угрожает — это мошенник.
@@ -238,10 +237,11 @@ def generate_recommendation(risk_level):
 
     else:
         return '''[color=008000][b]НИЗКИЙ РИСК МОШЕННИЧЕСТВА[/b][/color]
+
 [color=000000][b]Правила безопасности:[/b]
 1. Никогда [color=008000][b]не называйте[/b][/color] коды из SMS.
 2. [color=008000][b]Не переводите деньги[/b][/color] незнакомцам.
-3. При сомнении - положите трубку и перезвоните в банк по официальному номеру.[/color]'''
+3. При сомнении - положите трубку и перезвоните сами.[/color]'''
 
 
 def keep_supabase_awake():
@@ -266,12 +266,7 @@ def keepalive():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    if 'audio' not in request.files:
-        return jsonify({'error': 'No audio file provided'}), 400
-
     audio_file = request.files['audio']
-    if audio_file.filename == '':
-        return jsonify({'error': 'Empty filename'}), 400
 
     tmp_path = None
     try:
@@ -396,3 +391,4 @@ def analyze():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
