@@ -132,11 +132,10 @@ def analyze_risk_level(text):
         risk_level = 'Высокий'
         title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
         content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Сообщите код".\nЧто делать прямо сейчас:[/b]
+[color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
-2. [color=ff0000][b]НЕ[/b][/color] называйте никакие коды из SMS или push-уведомлений.
-3. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
-4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+2. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
+3. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
         
     elif (bank_count >= 2 and hack_count >= 1) or \
          (bank_count >= 1 and employee_count >= 1 and urgent_count >= 1) or \
@@ -144,11 +143,10 @@ def analyze_risk_level(text):
         risk_level = 'Высокий'
         title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
         content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Финансы под угрозой".\nЧто делать прямо сейчас:[/b]
+[color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
-2. [color=ff0000][b]НЕ[/b][/color] переводите деньги на какие-либо счета.
-3. Если вы [color=ff0000][b]УЖЕ ПЕРЕВЕЛИ[/b][/color] деньги - обратитесь в полицию.
-4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+2. Если вы [color=ff0000][b]УЖЕ ПЕРЕВЕЛИ[/b][/color] деньги - обратитесь в полицию.
+3. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
         
     elif (accident_count >= 1 and person_count >= 1 and urgent_count >= 1) or \
          (accident_count >= 1 and bank_count >= 1) or \
@@ -156,7 +154,7 @@ def analyze_risk_level(text):
         risk_level = 'Высокий'
         title = '[color=ff0000][b]ВЫСОКИЙ РИСК МОШЕННИЧЕСТВА![/b][/color]'
         content = f'''{title}\n
-[color=000000][b]Система распознала сценарий "Родственник в беде".\nЧто делать прямо сейчас:[/b]
+[color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]Прервите[/b][/color] разговор и [color=ff0000][b]перезвоните[/b][/color] родственнику на его личный номер.
 2. [color=ff0000][b]Не переводите деньги[/b][/color] незнакомцам, даже если представляются родственниками.
 3. Помните: сотрудник полиции/СК [color=ff0000][b]никогда не потребует[/b][/color] перевода денег для освобождения вашего родственника.[/color]'''
@@ -241,62 +239,57 @@ def analyze():
         analysis_date = datetime.now().isoformat()
         
         if supabase is not None:
-            try:
-                keep_supabase_awake()
+            keep_supabase_awake()
+            
+            audio_response = supabase.table('Аудиофайл').insert({
+                'Имя_файла': filename,
+                'Длительность': duration,
+                'Дата_анализа': analysis_date
+            }).execute()
                 
-                audio_response = supabase.table('Аудиофайл').insert({
-                    'Имя_файла': filename,
-                    'Длительность': duration,
-                    'Дата_анализа': analysis_date
+            audio_id = audio_response.data[0]['ИН_аудиофайла']
+                
+            supabase.table('Текст').insert({
+                'Объем_текста': word_count,
+                'Количество_маркеров': markers_count,
+                'Плотность_маркеров': markers_density,
+                'Риск_мошенничества': risk_level,
+                'Аудиофайл': audio_id
+            }).execute()
+                
+            profile = prosodic_characteristics(tmp_path)
+                
+            profile_response = supabase.table('Просодический_профиль').insert({
+                'mfcc_mean': profile['mfcc_mean'],
+                'mfcc_std': profile['mfcc_std'],
+                'spectral_constrast': profile['spectral_contrast'],
+                'zero_crossing_rate': profile['zero_crossing_rate'],
+                'Аудиофайл': audio_id
+            }).execute()
+                
+            profile_id = profile_response.data[0]['ИН_профиля']
+                
+            fraudster_id, similarity = comparison(profile)
+                
+            if fraudster_id and similarity >= 60:
+                supabase.table('Совпадение').insert({
+                    'Процент_совпадения': int(similarity),
+                    'Аудиофайл': audio_id,
+                    'Просодический_профиль': profile_id,
+                    'Мошенник': fraudster_id
                 }).execute()
-                
-                audio_id = audio_response.data[0]['ИН_аудиофайла']
-                
-                supabase.table('Текст').insert({
-                    'Объем_текста': word_count,
-                    'Количество_маркеров': markers_count,
-                    'Плотность_маркеров': markers_density,
-                    'Риск_мошенничества': risk_level,
-                    'Аудиофайл': audio_id
-                }).execute()
-                
-                profile = prosodic_characteristics(tmp_path)
-                
-                profile_response = supabase.table('Просодический_профиль').insert({
-                    'mfcc_mean': profile['mfcc_mean'],
-                    'mfcc_std': profile['mfcc_std'],
-                    'spectral_constrast': profile['spectral_contrast'],
-                    'zero_crossing_rate': profile['zero_crossing_rate'],
-                    'Аудиофайл': audio_id
-                }).execute()
-                
-                profile_id = profile_response.data[0]['ИН_профиля']
-                
-                fraudster_id, similarity = comparison(profile)
-                
-                if fraudster_id and similarity >= 60:
-                    supabase.table('Совпадение').insert({
-                        'Процент_совпадения': int(similarity),
-                        'Аудиофайл': audio_id,
-                        'Просодический_профиль': profile_id,
-                        'Мошенник': fraudster_id
-                    }).execute()
                     
-                    supabase.table('Мошенник').update({
-                        'Количество_обращений':
-                            supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
-                                                                                         fraudster_id).execute().data[
-                                0]['Количество_обращений'] + 1,
-                        'Последнее_обращение': analysis_date
-                    }).eq('ИН_мошенника', fraudster_id).execute()
+                supabase.table('Мошенник').update({
+                    'Количество_обращений':
+                        supabase.table('Мошенник').select('Количество_обращений').eq('ИН_мошенника',
+                                                                                        fraudster_id).execute().data[
+                            0]['Количество_обращений'] + 1,
+                    'Последнее_обращение': analysis_date
+                }).eq('ИН_мошенника', fraudster_id).execute()
                     
-                    result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
-                else:
-                    result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
-                    
-            except Exception as db_error:
-                print(f"Database error: {db_error}")
-                result_content += f'\n\n[size=14][color=ffd700]Примечание: не удалось сохранить данные в базу[/color][/size]'
+                result_content += f'\n\n[size=14][color=ff0000]Совпадение с мошенником: {similarity:.1f}%[/color][/size]'
+            else:
+                result_content += f'\n\n[size=14][color=008000]Совпадений с базой мошенников не обнаружено[/color][/size]'
         
         return jsonify({
             'success': True,
