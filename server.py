@@ -135,7 +135,7 @@ def analyze_risk_level(text):
 [color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
 2. Если вы [color=ff0000][b]УЖЕ СООБЩИЛИ[/b][/color] код - заблокируйте карту через мобильное приложение.
-3. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
         
     elif (bank_count >= 2 and hack_count >= 1) or \
          (bank_count >= 1 and employee_count >= 1 and urgent_count >= 1) or \
@@ -146,7 +146,7 @@ def analyze_risk_level(text):
 [color=000000][b]Что делать прямо сейчас:[/b]
 1. [color=ff0000][b]НЕЗАМЕДЛИТЕЛЬНО[/b][/color] прекратите разговор и положите трубку.
 2. Если вы [color=ff0000][b]УЖЕ ПЕРЕВЕЛИ[/b][/color] деньги - обратитесь в полицию.
-3. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
+4. Перезвоните в ваш банк по официальному номеру, указанному на обороте карты.[/color]'''
         
     elif (accident_count >= 1 and person_count >= 1 and urgent_count >= 1) or \
          (accident_count >= 1 and bank_count >= 1) or \
@@ -216,14 +216,13 @@ def analyze():
             audio_file.save(tmp.name)
             tmp_path = tmp.name
         
-        # Проверка WAV файла
         try:
             with wave.open(tmp_path, 'rb') as wav_check:
                 if wav_check.getnframes() == 0:
                     os.unlink(tmp_path)
                     return jsonify({'error': 'Аудиофайл не содержит данных'}), 400
         except wave.Error:
-            pass 
+            pass  
         
         text = transcribe_audio(tmp_path)
         
