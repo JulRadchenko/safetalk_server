@@ -1,1 +1,1 @@
-# safetalk_server
+Серверная часть
